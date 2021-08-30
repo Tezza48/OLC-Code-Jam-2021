@@ -3,6 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
+public enum SeedEvent: byte
+{
+    PLANTED,
+    GROW,
+    DIE,
+}
+
 public static class Materials
 {
     public const uint AIR = 0x00000000;
@@ -10,6 +17,9 @@ public static class Materials
     public const uint SAND = 0xff00ffff;
     public const uint SOIL = 0xff254c6e; // 6e4c25
     public const uint WATER = 0xffff0000;
+    public const uint LIVE_PLANT = 0xff00ff00;
+    public const uint MATURE_PLANT = 0xff7fff7f;
+    public const uint DEAD_PLANT = 0x7f7f7f7f;
     // TODO WT: Vapour
 
     public enum PhysicsType
@@ -17,6 +27,7 @@ public static class Materials
         NONE,
         PARTICLE_GRAVITY,
         LIQUID_GRAVITY,
+        STICKY_GRAVITY,
     }
 
     public static uint[] ALL = new uint[]
@@ -26,6 +37,9 @@ public static class Materials
         SAND,
         SOIL,
         WATER,
+        LIVE_PLANT,
+        //MATURE_PLANT, // Not allowed
+        //DEAD_PLANT, // Not allowed
     };
 
     public static int GetMass(uint material)
@@ -42,6 +56,12 @@ public static class Materials
                 return 50;
             case WATER:
                 return 30;
+            case LIVE_PLANT:
+                return 50;
+            case MATURE_PLANT:
+                return 50;
+            case DEAD_PLANT:
+                return 40;
             default:
                 return 0;
         }
@@ -61,6 +81,12 @@ public static class Materials
                 return "Soil";
             case WATER:
                 return "Water";
+            case LIVE_PLANT:
+                return "Plant";
+            case MATURE_PLANT:
+                return "Mature Plant";
+            case DEAD_PLANT:
+                return "Dead Plant";
             default:
                 return "Unknown";
         }
@@ -72,10 +98,15 @@ public static class Materials
         {
             case SAND:
             case SOIL:
+            case DEAD_PLANT:
                 return PhysicsType.PARTICLE_GRAVITY;
 
             case WATER:
                 return PhysicsType.LIQUID_GRAVITY;
+
+            case LIVE_PLANT:
+            case MATURE_PLANT:
+                return PhysicsType.STICKY_GRAVITY;
 
             case AIR:
             case SOLID_RED:
@@ -88,6 +119,14 @@ public static class Materials
     {
         return new Color32((byte)(material & 0xff), (byte)(material >> 8 & 0xff), (byte)(material >> 16 & 0xff), (byte)(material >> 24 & 0xff));
     }
+}
+
+public struct Plant
+{
+    byte age;
+    byte x;
+    byte y;
+    byte id;
 }
 
 public class PixelSimulationCanvas : MonoBehaviour
@@ -103,10 +142,8 @@ public class PixelSimulationCanvas : MonoBehaviour
 
     public bool isServer = true;
 
-    public bool seedMode = false;
+    //public bool seedMode = false;
     public uint currentMaterial = Materials.SAND;
-
-    private int Gui_placementTab = 0;
 
     private long frame = 0;
 
@@ -157,15 +194,25 @@ public class PixelSimulationCanvas : MonoBehaviour
             if (Input.GetMouseButtonDown(0))
             {
                 var mousePos = GetCanvasMousePos();
-                SendClickEvent(new Vector2Int((int)mousePos.x, (int)mousePos.y), currentMaterial);
+                var mousePosInt = new Vector2Int((int)mousePos.x, (int)mousePos.y);
+
+                //if (seedMode)
+                //{
+                //    sendSeedPlantedEvent(mousePosInt);
+                //}
+
+                //else
+                {
+                    SendClickEvent(mousePosInt, currentMaterial);
+                }
             }
         }
-
 
         if (isServer && Time.time > nextCanvasUpdate)
         {
             nextCanvasUpdate = Time.time + canvasTickInterval;
             SendTickEvent(this.frame);
+            Debug.Log("Tick");
             frame++;
         }
     }
@@ -306,6 +353,70 @@ public class PixelSimulationCanvas : MonoBehaviour
                             isTextureDirty = true;
                         }
                         break;
+
+                    case Materials.PhysicsType.STICKY_GRAVITY:
+                        // TODO WT: Like ParticleGravity but only falls if there's no neighbouring materials.
+                        break;
+                    default:
+                        break;
+                }
+
+                switch (currentMaterial)
+                {
+                    case Materials.LIVE_PLANT:
+                        var growChance = 0.05f;
+                        var growChanceScaler = 0.01f;
+
+                        var matureChance = 0.05f;
+                        var matureChanceScaler = 4.0f;
+
+                        if (Random.value < growChance)
+                        {
+                            // Try to grow a shoot upwards
+                            if (pixelData[top] == Materials.AIR)
+                            {
+                                pixelData[top] = Materials.LIVE_PLANT;
+                                isTextureDirty = true;
+                                banned.Add(top);
+
+                                growChance *= growChanceScaler;
+                                matureChance *= matureChanceScaler;
+                            }
+                        }
+
+                        if (Random.value < growChance)
+                        {
+                            if (pixelData[topLeft] == Materials.AIR)
+                            {
+                                pixelData[topLeft] = Materials.LIVE_PLANT;
+                                isTextureDirty = true;
+                                banned.Add(topLeft);
+
+                                growChance *= growChanceScaler;
+                                matureChance *= matureChanceScaler;
+                            }
+                        }
+
+                        if (Random.value < growChance)
+                        {
+                            if (pixelData[topRight] == Materials.AIR)
+                            {
+                                pixelData[topRight] = Materials.LIVE_PLANT;
+                                isTextureDirty = true;
+                                banned.Add(topRight);
+
+                                growChance *= growChanceScaler;
+                                matureChance *= matureChanceScaler;
+                            }
+                        }
+
+                        if (Random.value < matureChance)
+                        {
+                            pixelData[center] = Materials.MATURE_PLANT;
+                            isTextureDirty = true;
+                        }
+
+                        break;
                     default:
                         break;
                 }
@@ -341,6 +452,11 @@ public class PixelSimulationCanvas : MonoBehaviour
         ReceiveClickEvent(position, material);
     }
 
+    //private void sendSeedPlantedEvent(Vector2Int position)
+    //{
+    //    ReceiveSeedPlantedEvent(position);
+    //}
+
     private void SendTickEvent(long frame)
     {
         ReceiveTickEvent(this.frame);
@@ -348,50 +464,57 @@ public class PixelSimulationCanvas : MonoBehaviour
 
     private void ReceiveClickEvent(Vector2Int position, uint material)
     {
-
-        // Top
-        if (position.x > 0 && position.y > 0)
-        {
-            pixelData[(position.y - 1) * canvasSize.x + (position.x - 1)] = material;
-        }
-        if (position.y > 0)
-        {
-            pixelData[(position.y - 1) * canvasSize.x + position.x] = material;
-        }
-        if (position.x < canvasSize.x - 1 && position.y > 0)
-        {
-            pixelData[(position.y - 1) * canvasSize.x + (position.x + 1)] = material;
-        }
-
-        // Center
-        if (position.x > 0)
-        {
-            pixelData[position.y * canvasSize.x + (position.x - 1)] = material;
-        }
-
         pixelData[position.y * canvasSize.x + position.x] = material;
 
-        if (position.x < canvasSize.x - 1)
+        if (material != Materials.LIVE_PLANT && material != Materials.DEAD_PLANT)
         {
-            pixelData[position.y * canvasSize.x + (position.x + 1)] = material;
-        }
+            // Top
+            if (position.x > 0 && position.y > 0)
+            {
+                pixelData[(position.y - 1) * canvasSize.x + (position.x - 1)] = material;
+            }
+            if (position.y > 0)
+            {
+                pixelData[(position.y - 1) * canvasSize.x + position.x] = material;
+            }
+            if (position.x < canvasSize.x - 1 && position.y > 0)
+            {
+                pixelData[(position.y - 1) * canvasSize.x + (position.x + 1)] = material;
+            }
 
-        // Bottom
-        if (position.x > 0 && position.y < canvasSize.y - 1)
-        {
-            pixelData[(position.y + 1) * canvasSize.x + (position.x - 1)] = material;
-        }
-        if (position.y < canvasSize.y - 1)
-        {
-            pixelData[(position.y + 1) * canvasSize.x + position.x] = material;
-        }
-        if (position.x < canvasSize.x - 1 && position.y < canvasSize.y - 1)
-        {
-            pixelData[(position.y + 1) * canvasSize.x + (position.x + 1)] = material;
+            // Center
+            if (position.x > 0)
+            {
+                pixelData[position.y * canvasSize.x + (position.x - 1)] = material;
+            }
+
+            if (position.x < canvasSize.x - 1)
+            {
+                pixelData[position.y * canvasSize.x + (position.x + 1)] = material;
+            }
+
+            // Bottom
+            if (position.x > 0 && position.y < canvasSize.y - 1)
+            {
+                pixelData[(position.y + 1) * canvasSize.x + (position.x - 1)] = material;
+            }
+            if (position.y < canvasSize.y - 1)
+            {
+                pixelData[(position.y + 1) * canvasSize.x + position.x] = material;
+            }
+            if (position.x < canvasSize.x - 1 && position.y < canvasSize.y - 1)
+            {
+                pixelData[(position.y + 1) * canvasSize.x + (position.x + 1)] = material;
+            }
         }
 
         isTextureDirty = true;
     }
+
+    //private void ReceiveSeedPlantedEvent(Vector2Int position)
+    //{
+
+    //}
 
     private void ReceiveCanvasRefreshEvent(uint[] newPixels, long frame)
     {
@@ -404,31 +527,19 @@ public class PixelSimulationCanvas : MonoBehaviour
     {
         this.frame = frame;
         UpdateCanvas();
+
+        // TODO WT: If more than a few frames behind, need to send a refresh request event.
     }
 
     private void GuiWindowCallback(int id)
     {
         GUILayout.Label("Selected: " + Materials.GetName(currentMaterial));
-
-        Gui_placementTab = GUILayout.Toolbar(Gui_placementTab, new string[] { "Material", "Seed" });
-        switch (Gui_placementTab)
+        foreach (var material in Materials.ALL)
         {
-            case 0:
-                seedMode = false;
-
-                foreach (var material in Materials.ALL)
-                {
-                    if (GUILayout.Button(Materials.GetName(material)))
-                    {
-                        currentMaterial = material;
-                    }
-                }
-                break;
-            case 1:
-                seedMode = true;
-                break;
-            default:
-                break;
+            if (GUILayout.Button(Materials.GetName(material)))
+            {
+                currentMaterial = material;
+            }
         }
     }
 }
