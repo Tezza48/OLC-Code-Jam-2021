@@ -19,6 +19,15 @@ public static class Materials
         LIQUID_GRAVITY,
     }
 
+    public static uint[] ALL = new uint[]
+    {
+        AIR,
+        SOLID_RED,
+        SAND,
+        SOIL,
+        WATER,
+    };
+
     public static int GetMass(uint material)
     {
         switch (material)
@@ -35,6 +44,25 @@ public static class Materials
                 return 30;
             default:
                 return 0;
+        }
+    }
+
+    public static string GetName(uint material)
+    {
+        switch (material)
+        {
+            case AIR:
+                return "Air";
+            case SOLID_RED:
+                return "Solid Red";
+            case SAND:
+                return "Sand";
+            case SOIL:
+                return "Soil";
+            case WATER:
+                return "Water";
+            default:
+                return "Unknown";
         }
     }
 
@@ -55,6 +83,11 @@ public static class Materials
                 return PhysicsType.NONE;
         }
     }
+
+    public static Color32 ToColor32(uint material)
+    {
+        return new Color32((byte)(material & 0xff), (byte)(material >> 8 & 0xff), (byte)(material >> 16 & 0xff), (byte)(material >> 24 & 0xff));
+    }
 }
 
 public class PixelSimulationCanvas : MonoBehaviour
@@ -68,56 +101,78 @@ public class PixelSimulationCanvas : MonoBehaviour
     private uint[] pixelData;
     private bool isTextureDirty = false;
 
+    public bool isServer = true;
+
+    public bool seedMode = false;
     public uint currentMaterial = Materials.SAND;
 
+    private int Gui_placementTab = 0;
+
     private long frame = 0;
+
+    private float nextCanvasUpdate;
+    private float canvasTickInterval = 1.0f / 25.0f;
+
+    private Rect Gui_rect;
 
     // Start is called before the first frame update
     void Start()
     {
-        pixelData = new uint[canvasSize.x * canvasSize.y];
+        if (isServer)
+        {
+            ReceiveCanvasRefreshEvent(new uint[canvasSize.x * canvasSize.y], 0);
+        }
 
         canvasTexture = new Texture2D(canvasSize.x, canvasSize.y, TextureFormat.RGBA32, false, true);
 
         canvasTexture.filterMode = FilterMode.Point;
         canvasMaterial.mainTexture = canvasTexture;
-        ClearCanvas();
 
-        InvokeRepeating("UpdateCanvas", 0, 1.0f / 5f);
+        isTextureDirty = true;
+
+        nextCanvasUpdate = Time.time;
     }
 
     // Update is called once per frame
     void Update()
     {
-        if (Input.GetKeyDown(KeyCode.Alpha1))
+        //if (Input.GetKeyDown(KeyCode.Alpha1))
+        //{
+        //    currentMaterial = Materials.SOLID_RED;
+        //}
+        //if (Input.GetKeyDown(KeyCode.Alpha2))
+        //{
+        //    currentMaterial = Materials.SAND;
+        //}
+        //if (Input.GetKeyDown(KeyCode.Alpha3))
+        //{
+        //    currentMaterial = Materials.SOIL;
+        //}
+        //if (Input.GetKeyDown(KeyCode.Alpha4))
+        //{
+        //    currentMaterial = Materials.WATER;
+        //}
+        if (!Gui_rect.Contains(new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y)))
         {
-            currentMaterial = Materials.SOLID_RED;
-        }
-        if (Input.GetKeyDown(KeyCode.Alpha2))
-        {
-            currentMaterial = Materials.SAND;
-        }
-        if (Input.GetKeyDown(KeyCode.Alpha3))
-        {
-            currentMaterial = Materials.SOIL;
-        }
-        if (Input.GetKeyDown(KeyCode.Alpha4))
-        {
-            currentMaterial = Materials.WATER;
+            if (Input.GetMouseButtonDown(0))
+            {
+                var mousePos = GetCanvasMousePos();
+                SendClickEvent(new Vector2Int((int)mousePos.x, (int)mousePos.y), currentMaterial);
+            }
         }
 
-        if (Input.GetMouseButton(0))
-        {
-            var mousePos = GetMousePos();
 
-            pixelData[(int)mousePos.y * canvasSize.x + (int)mousePos.x] = currentMaterial;
-            isTextureDirty = true;
+        if (isServer && Time.time > nextCanvasUpdate)
+        {
+            nextCanvasUpdate = Time.time + canvasTickInterval;
+            SendTickEvent(this.frame);
+            frame++;
         }
     }
 
     void UpdateCanvas()
     {
-        frame++;
+        Random.InitState((int)frame);
 
         List<int> banned = new List<int>();
         for (int y = 0; y < canvasSize.y; y++)
@@ -266,19 +321,114 @@ public class PixelSimulationCanvas : MonoBehaviour
         }
     }
 
-    void ClearCanvas()
-    {
-        pixelData = Enumerable.Repeat(Materials.AIR, pixelData.Length).ToArray();
-        isTextureDirty = true;
-    }
-
     byte RandomByte()
     {
         return (byte)(Random.value * byte.MaxValue);
     }
 
-    Vector2 GetMousePos()
+    Vector2 GetCanvasMousePos()
     {
         return (Vector2)Input.mousePosition / new Vector2(Screen.width, Screen.height) * (Vector2)canvasSize;
+    }
+
+    private void OnGUI()
+    {
+        Gui_rect = GUILayout.Window(0, Gui_rect, GuiWindowCallback, "Settings");
+    }
+
+    private void SendClickEvent(Vector2Int position, uint material)
+    {
+        ReceiveClickEvent(position, material);
+    }
+
+    private void SendTickEvent(long frame)
+    {
+        ReceiveTickEvent(this.frame);
+    }
+
+    private void ReceiveClickEvent(Vector2Int position, uint material)
+    {
+
+        // Top
+        if (position.x > 0 && position.y > 0)
+        {
+            pixelData[(position.y - 1) * canvasSize.x + (position.x - 1)] = material;
+        }
+        if (position.y > 0)
+        {
+            pixelData[(position.y - 1) * canvasSize.x + position.x] = material;
+        }
+        if (position.x < canvasSize.x - 1 && position.y > 0)
+        {
+            pixelData[(position.y - 1) * canvasSize.x + (position.x + 1)] = material;
+        }
+
+        // Center
+        if (position.x > 0)
+        {
+            pixelData[position.y * canvasSize.x + (position.x - 1)] = material;
+        }
+
+        pixelData[position.y * canvasSize.x + position.x] = material;
+
+        if (position.x < canvasSize.x - 1)
+        {
+            pixelData[position.y * canvasSize.x + (position.x + 1)] = material;
+        }
+
+        // Bottom
+        if (position.x > 0 && position.y < canvasSize.y - 1)
+        {
+            pixelData[(position.y + 1) * canvasSize.x + (position.x - 1)] = material;
+        }
+        if (position.y < canvasSize.y - 1)
+        {
+            pixelData[(position.y + 1) * canvasSize.x + position.x] = material;
+        }
+        if (position.x < canvasSize.x - 1 && position.y < canvasSize.y - 1)
+        {
+            pixelData[(position.y + 1) * canvasSize.x + (position.x + 1)] = material;
+        }
+
+        isTextureDirty = true;
+    }
+
+    private void ReceiveCanvasRefreshEvent(uint[] newPixels, long frame)
+    {
+        pixelData = newPixels;
+        this.frame = frame;
+        this.isTextureDirty = true;
+    }
+
+    private void ReceiveTickEvent(long frame)
+    {
+        this.frame = frame;
+        UpdateCanvas();
+    }
+
+    private void GuiWindowCallback(int id)
+    {
+        GUILayout.Label("Selected: " + Materials.GetName(currentMaterial));
+
+        Gui_placementTab = GUILayout.Toolbar(Gui_placementTab, new string[] { "Material", "Seed" });
+        switch (Gui_placementTab)
+        {
+            case 0:
+                seedMode = false;
+
+                foreach (var material in Materials.ALL)
+                {
+                    if (GUILayout.Button(Materials.GetName(material)))
+                    {
+                        currentMaterial = material;
+                    }
+                }
+                break;
+            case 1:
+                seedMode = true;
+                break;
+            default:
+                break;
+        }
     }
 }
