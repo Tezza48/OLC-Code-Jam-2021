@@ -5,9 +5,56 @@ using UnityEngine;
 
 public static class Materials
 {
-    public static readonly Color32 AIR = new Color32(0, 0, 0, 0);
-    public static readonly Color32 SOLID_RED = new Color32(0xff, 0x00, 0x00, 0xff);
-    public static readonly Color32 SAND = new Color32(0xd9, 0xc7, 0x8b, 0xff);
+    public const uint AIR = 0x00000000;
+    public const uint SOLID_RED = 0xff0000ff;
+    public const uint SAND = 0xff00ffff;
+    public const uint SOIL = 0xff254c6e; // 6e4c25
+    public const uint WATER = 0xffff0000;
+    // TODO WT: Vapour
+
+    public enum PhysicsType
+    {
+        NONE,
+        PARTICLE_GRAVITY,
+        LIQUID_GRAVITY,
+    }
+
+    public static int GetMass(uint material)
+    {
+        switch (material)
+        {
+            case AIR:
+                return 20;
+            case SOLID_RED:
+                return 50;
+            case SAND:
+                return 50;
+            case SOIL:
+                return 50;
+            case WATER:
+                return 30;
+            default:
+                return 0;
+        }
+    }
+
+    public static PhysicsType getGravityType(uint material)
+    {
+        switch (material)
+        {
+            case SAND:
+            case SOIL:
+                return PhysicsType.PARTICLE_GRAVITY;
+
+            case WATER:
+                return PhysicsType.LIQUID_GRAVITY;
+
+            case AIR:
+            case SOLID_RED:
+            default:
+                return PhysicsType.NONE;
+        }
+    }
 }
 
 public class PixelSimulationCanvas : MonoBehaviour
@@ -18,37 +65,61 @@ public class PixelSimulationCanvas : MonoBehaviour
 
     private Texture2D canvasTexture;
 
+    private uint[] pixelData;
+    private bool isTextureDirty = false;
+
+    public uint currentMaterial = Materials.SAND;
+
+    private long frame = 0;
+
     // Start is called before the first frame update
     void Start()
     {
+        pixelData = new uint[canvasSize.x * canvasSize.y];
+
         canvasTexture = new Texture2D(canvasSize.x, canvasSize.y, TextureFormat.RGBA32, false, true);
+
         canvasTexture.filterMode = FilterMode.Point;
         canvasMaterial.mainTexture = canvasTexture;
         ClearCanvas();
 
-        InvokeRepeating("UpdateCanvas", 0, 0.1f);
+        InvokeRepeating("UpdateCanvas", 0, 1.0f / 5f);
     }
 
     // Update is called once per frame
     void Update()
     {
+        if (Input.GetKeyDown(KeyCode.Alpha1))
+        {
+            currentMaterial = Materials.SOLID_RED;
+        }
+        if (Input.GetKeyDown(KeyCode.Alpha2))
+        {
+            currentMaterial = Materials.SAND;
+        }
+        if (Input.GetKeyDown(KeyCode.Alpha3))
+        {
+            currentMaterial = Materials.SOIL;
+        }
+        if (Input.GetKeyDown(KeyCode.Alpha4))
+        {
+            currentMaterial = Materials.WATER;
+        }
+
         if (Input.GetMouseButton(0))
         {
             var mousePos = GetMousePos();
 
-            canvasTexture.SetPixel((int)mousePos.x, (int)mousePos.y, Materials.SAND);
-
-            canvasTexture.Apply();
+            pixelData[(int)mousePos.y * canvasSize.x + (int)mousePos.x] = currentMaterial;
+            isTextureDirty = true;
         }
-
-        //UpdateCanvas();
     }
 
     void UpdateCanvas()
     {
-        var texels = canvasTexture.GetPixels32();
-        bool isDirty = false;
+        frame++;
 
+        List<int> banned = new List<int>();
         for (int y = 0; y < canvasSize.y; y++)
         {
             for (int x = 0; x < canvasSize.x; x++)
@@ -73,31 +144,132 @@ public class PixelSimulationCanvas : MonoBehaviour
                     continue;
                 }
 
-                var currentMaterial = texels[y * canvasSize.x + x];
+                if (banned.Contains(center)) continue;
 
-                if (currentMaterial.Equals(Materials.SAND))
+                banned.Add(center);
+
+                var currentMaterial = pixelData[y * canvasSize.x + x];
+                var currentMass = Materials.GetMass(currentMaterial);
+
+                switch (Materials.getGravityType(currentMaterial))
                 {
-                    if (texels[bottom].Equals(Materials.AIR))
-                    {
-                        texels[bottom] = Materials.SAND;
-                        texels[center] = Materials.AIR;
-                        isDirty = true;
-                    }
+                    case Materials.PhysicsType.PARTICLE_GRAVITY:
+                        var newPos = center;
+
+                        if (currentMass > Materials.GetMass(pixelData[bottom]))
+                        {
+                            newPos = bottom;
+                        }
+                        else
+                        {
+                            if (Random.value > 0.5)
+                            {
+                                if (currentMass > Materials.GetMass(pixelData[bottomLeft]))
+                                {
+                                    newPos = bottomLeft;
+                                }
+                                else if (currentMass > Materials.GetMass(pixelData[bottomRight]))
+                                {
+                                    newPos = bottomRight;
+                                }
+                            } else { 
+                                if (currentMass > Materials.GetMass(pixelData[bottomRight]))
+                                {
+                                    newPos = bottomRight;
+                                }
+                                else if (currentMass > Materials.GetMass(pixelData[bottomLeft]))
+                                {
+                                    newPos = bottomLeft;
+                                }
+                            }
+                        }
+
+                        if (newPos != center)
+                        {
+                            pixelData[center] = pixelData[newPos];
+                            pixelData[newPos] = currentMaterial;
+                            banned.Add(newPos);
+
+                            isTextureDirty = true;
+                        }
+
+                        break;
+                    case Materials.PhysicsType.LIQUID_GRAVITY:
+                        newPos = center;
+
+                        if (pixelData[bottom] == Materials.AIR)
+                        {
+                            newPos = bottom;
+                        }
+                        else
+                        {
+                            if (Random.value > 0.5)
+                            {
+                                if (pixelData[bottomLeft] == Materials.AIR)
+                                {
+                                    newPos = bottomLeft;
+                                }
+                                else if (pixelData[bottomRight] == Materials.AIR)
+                                {
+                                    newPos = bottomRight;
+                                }
+                                else if (pixelData[left] == Materials.AIR)
+                                {
+                                    newPos = left;
+                                }
+                                else if (pixelData[right] == Materials.AIR)
+                                {
+                                    newPos = right;
+                                }
+                            } else
+                            {
+                                if (pixelData[bottomRight] == Materials.AIR)
+                                {
+                                    newPos = bottomRight;
+                                }
+                                else if (pixelData[bottomLeft] == Materials.AIR)
+                                {
+                                    newPos = bottomLeft;
+                                }
+                                else if (pixelData[right] == Materials.AIR)
+                                {
+                                    newPos = right;
+                                }
+                                else if (pixelData[left] == Materials.AIR)
+                                {
+                                    newPos = left;
+                                }
+                            }
+                        }
+
+                        if (newPos != center)
+                        {
+                            pixelData[center] = pixelData[newPos];
+                            pixelData[newPos] = currentMaterial;
+                            banned.Add(newPos);
+
+                            isTextureDirty = true;
+                        }
+                        break;
+                    default:
+                        break;
                 }
             }
         }
 
-        if (isDirty)
+        if (isTextureDirty)
         {
-            Debug.Log("Update");
-            canvasTexture.SetPixels32(texels);
+            isTextureDirty = false;
+
+            canvasTexture.SetPixelData(pixelData, 0);
             canvasTexture.Apply();
         }
     }
 
     void ClearCanvas()
     {
-        canvasTexture.SetPixels32(Enumerable.Repeat(Materials.AIR, canvasSize.x * canvasSize.y).ToArray());
+        pixelData = Enumerable.Repeat(Materials.AIR, pixelData.Length).ToArray();
+        isTextureDirty = true;
     }
 
     byte RandomByte()
