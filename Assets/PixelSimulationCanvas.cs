@@ -19,7 +19,7 @@ public static class Materials
     public const uint WATER = 0xffff0000;
     public const uint LIVE_PLANT = 0xff00ff00;
     public const uint MATURE_PLANT = 0xff7fff7f;
-    public const uint DEAD_PLANT = 0x7f7f7f7f;
+    public const uint DEAD_PLANT = 0xff7f7fff;
     // TODO WT: Vapour
 
     public enum PhysicsType
@@ -27,7 +27,7 @@ public static class Materials
         NONE,
         PARTICLE_GRAVITY,
         LIQUID_GRAVITY,
-        STICKY_GRAVITY,
+        PLANT_GRAVITY,
     }
 
     public static uint[] ALL = new uint[]
@@ -106,7 +106,7 @@ public static class Materials
 
             case LIVE_PLANT:
             case MATURE_PLANT:
-                return PhysicsType.STICKY_GRAVITY;
+                return PhysicsType.PLANT_GRAVITY;
 
             case AIR:
             case SOLID_RED:
@@ -256,48 +256,11 @@ public class PixelSimulationCanvas : MonoBehaviour
                 switch (Materials.getGravityType(currentMaterial))
                 {
                     case Materials.PhysicsType.PARTICLE_GRAVITY:
-                        var newPos = center;
-
-                        if (currentMass > Materials.GetMass(pixelData[bottom]))
-                        {
-                            newPos = bottom;
-                        }
-                        else
-                        {
-                            if (Random.value > 0.5)
-                            {
-                                if (currentMass > Materials.GetMass(pixelData[bottomLeft]))
-                                {
-                                    newPos = bottomLeft;
-                                }
-                                else if (currentMass > Materials.GetMass(pixelData[bottomRight]))
-                                {
-                                    newPos = bottomRight;
-                                }
-                            } else { 
-                                if (currentMass > Materials.GetMass(pixelData[bottomRight]))
-                                {
-                                    newPos = bottomRight;
-                                }
-                                else if (currentMass > Materials.GetMass(pixelData[bottomLeft]))
-                                {
-                                    newPos = bottomLeft;
-                                }
-                            }
-                        }
-
-                        if (newPos != center)
-                        {
-                            pixelData[center] = pixelData[newPos];
-                            pixelData[newPos] = currentMaterial;
-                            banned.Add(newPos);
-
-                            isTextureDirty = true;
-                        }
+                        DoParticleGravity(banned, bottomLeft, bottom, bottomRight, center, currentMaterial, currentMass);
 
                         break;
                     case Materials.PhysicsType.LIQUID_GRAVITY:
-                        newPos = center;
+                        var newPos = center;
 
                         if (pixelData[bottom] == Materials.AIR)
                         {
@@ -354,8 +317,29 @@ public class PixelSimulationCanvas : MonoBehaviour
                         }
                         break;
 
-                    case Materials.PhysicsType.STICKY_GRAVITY:
+                    case Materials.PhysicsType.PLANT_GRAVITY:
                         // TODO WT: Like ParticleGravity but only falls if there's no neighbouring materials.
+
+                        bool hasSolidNeighbour = false;
+                        //for (int cy = Mathf.Max(0, y - 1); cy < Mathf.Min(canvasSize.y - 1, y + 2); cy++)
+                        //{
+                        //    for (int cx = Mathf.Max(0, x - 1); cx < Mathf.Min(canvasSize.x - 1, x + 2); cx++)
+                        //    {
+                        //        hasSolidNeighbour = hasSolidNeighbour || 
+                        //    }
+                        //}
+
+                        LoopNeibouring(new Vector2Int(x - 1, y - 1), new Vector2Int(x + 1, y - 1), (cx, cy) =>
+                        {
+                            if (cx == x && cy == y) return;
+                            hasSolidNeighbour = hasSolidNeighbour || pixelData[cy * canvasSize.x + cx] != Materials.AIR;
+                        });
+
+                        if (!hasSolidNeighbour)
+                        {
+                            DoParticleGravity(banned, bottomLeft, bottom, bottomRight, center, currentMaterial, currentMass);
+                        }
+
                         break;
                     default:
                         break;
@@ -364,11 +348,11 @@ public class PixelSimulationCanvas : MonoBehaviour
                 switch (currentMaterial)
                 {
                     case Materials.LIVE_PLANT:
-                        var growChance = 0.05f;
+                        var growChance = 0.01f;
                         var growChanceScaler = 0.01f;
 
-                        var matureChance = 0.05f;
-                        var matureChanceScaler = 4.0f;
+                        var matureChance = growChance;
+                        var matureChanceScaler = 2.0f;
 
                         if (Random.value < growChance)
                         {
@@ -416,6 +400,13 @@ public class PixelSimulationCanvas : MonoBehaviour
                             isTextureDirty = true;
                         }
 
+                        DoPlantDeathCheck(x, y);
+
+                        break;
+
+                    case Materials.MATURE_PLANT:
+                        DoPlantDeathCheck(x, y);
+
                         break;
                     default:
                         break;
@@ -429,6 +420,69 @@ public class PixelSimulationCanvas : MonoBehaviour
 
             canvasTexture.SetPixelData(pixelData, 0);
             canvasTexture.Apply();
+        }
+    }
+
+    private void DoParticleGravity(List<int> banned, int bottomLeft, int bottom, int bottomRight, int center, uint currentMaterial, int currentMass)
+    {
+        var newPos = center;
+
+        if (currentMass > Materials.GetMass(pixelData[bottom]))
+        {
+            newPos = bottom;
+        }
+        else
+        {
+            if (Random.value > 0.5)
+            {
+                if (currentMass > Materials.GetMass(pixelData[bottomLeft]))
+                {
+                    newPos = bottomLeft;
+                }
+                else if (currentMass > Materials.GetMass(pixelData[bottomRight]))
+                {
+                    newPos = bottomRight;
+                }
+            }
+            else
+            {
+                if (currentMass > Materials.GetMass(pixelData[bottomRight]))
+                {
+                    newPos = bottomRight;
+                }
+                else if (currentMass > Materials.GetMass(pixelData[bottomLeft]))
+                {
+                    newPos = bottomLeft;
+                }
+            }
+        }
+
+        if (newPos != center)
+        {
+            pixelData[center] = pixelData[newPos];
+            pixelData[newPos] = currentMaterial;
+            banned.Add(newPos);
+
+            isTextureDirty = true;
+        }
+    }
+
+    void DoPlantDeathCheck(int x, int y)
+    {
+        var neighbourCount = 0;
+        LoopNeibouring(new Vector2Int(x - 1, y - 1), new Vector2Int(x + 1, y + 1), (cx, cy) =>
+        {
+            if (cx != x && cy != y) return;
+            
+            if (pixelData[cy * canvasSize.x + cx] != Materials.AIR) neighbourCount++;
+        });
+
+        Debug.Log(neighbourCount);
+
+        if (neighbourCount > 4)
+        {
+            pixelData[y * canvasSize.x + x] = Materials.DEAD_PLANT;
+            isTextureDirty = true;
         }
     }
 
@@ -515,6 +569,18 @@ public class PixelSimulationCanvas : MonoBehaviour
     //{
 
     //}
+
+    delegate void Callback(int x, int y);
+    private void LoopNeibouring(Vector2Int min, Vector2Int max, Callback callback)
+    {
+        for (int y = min.y; y <= max.y; y++)
+        {
+            for (int x = min.x; x <= max.x; x++)
+            {
+                callback(x, y);
+            }
+        }
+    }
 
     private void ReceiveCanvasRefreshEvent(uint[] newPixels, long frame)
     {
