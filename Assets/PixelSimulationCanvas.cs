@@ -121,14 +121,6 @@ public static class Materials
     }
 }
 
-public struct Plant
-{
-    byte age;
-    byte x;
-    byte y;
-    byte id;
-}
-
 public class PixelSimulationCanvas : MonoBehaviour
 {
     public Material canvasMaterial;
@@ -148,7 +140,7 @@ public class PixelSimulationCanvas : MonoBehaviour
     private long frame = 0;
 
     private float nextCanvasUpdate;
-    private float canvasTickInterval = 1.0f / 25.0f;
+    private float canvasTickInterval = 1.0f / 15.0f;
 
     private Rect Gui_rect;
 
@@ -211,8 +203,7 @@ public class PixelSimulationCanvas : MonoBehaviour
         if (isServer && Time.time > nextCanvasUpdate)
         {
             nextCanvasUpdate = Time.time + canvasTickInterval;
-            SendTickEvent(this.frame);
-            Debug.Log("Tick");
+            SendTickEvent(frame);
             frame++;
         }
     }
@@ -226,118 +217,41 @@ public class PixelSimulationCanvas : MonoBehaviour
         {
             for (int x = 0; x < canvasSize.x; x++)
             {
-                //canvasTexture.SetPixel(x, y, new Color32(RandomByte(), RandomByte(), RandomByte(), 0xff));
+                var thisIndex = GetIndex(x, y);
+                if (banned.Contains(thisIndex)) continue;
 
-                var bottomLeft = (y - 1) * canvasSize.x + (x - 1);
-                var bottom = (y - 1) * canvasSize.x + x;
-                var bottomRight = (y - 1) * canvasSize.x + (x + 1);
+                banned.Add(thisIndex);
 
-                var left = (y) * canvasSize.x + (x - 1);
-                var center = (y) * canvasSize.x + x;
-                var right = (y) * canvasSize.x + (x + 1);
+                var thisMaterial = pixelData[GetIndex(x, y)];
+                var thisMass = Materials.GetMass(thisMaterial);
 
-                var topLeft = (y + 1) * canvasSize.x + (x - 1);
-                var top = (y + 1) * canvasSize.x + x;
-                var topRight = (y + 1) * canvasSize.x + (x + 1);
-
-                // TODO WT: Remove this early return and do actual edge detection
-                if (x == 0 || x == canvasSize.x - 1 || y == 0 || y == canvasSize.y - 1)
-                {
-                    continue;
-                }
-
-                if (banned.Contains(center)) continue;
-
-                banned.Add(center);
-
-                var currentMaterial = pixelData[y * canvasSize.x + x];
-                var currentMass = Materials.GetMass(currentMaterial);
-
-                switch (Materials.getGravityType(currentMaterial))
+                switch (Materials.getGravityType(thisMaterial))
                 {
                     case Materials.PhysicsType.PARTICLE_GRAVITY:
-                        DoParticleGravity(banned, bottomLeft, bottom, bottomRight, center, currentMaterial, currentMass);
+                        DoParticleGravity(x, y, thisMaterial, thisMass, banned);
 
                         break;
                     case Materials.PhysicsType.LIQUID_GRAVITY:
-                        var newPos = center;
-
-                        if (pixelData[bottom] == Materials.AIR)
-                        {
-                            newPos = bottom;
-                        }
-                        else
-                        {
-                            if (Random.value > 0.5)
-                            {
-                                if (pixelData[bottomLeft] == Materials.AIR)
-                                {
-                                    newPos = bottomLeft;
-                                }
-                                else if (pixelData[bottomRight] == Materials.AIR)
-                                {
-                                    newPos = bottomRight;
-                                }
-                                else if (pixelData[left] == Materials.AIR)
-                                {
-                                    newPos = left;
-                                }
-                                else if (pixelData[right] == Materials.AIR)
-                                {
-                                    newPos = right;
-                                }
-                            } else
-                            {
-                                if (pixelData[bottomRight] == Materials.AIR)
-                                {
-                                    newPos = bottomRight;
-                                }
-                                else if (pixelData[bottomLeft] == Materials.AIR)
-                                {
-                                    newPos = bottomLeft;
-                                }
-                                else if (pixelData[right] == Materials.AIR)
-                                {
-                                    newPos = right;
-                                }
-                                else if (pixelData[left] == Materials.AIR)
-                                {
-                                    newPos = left;
-                                }
-                            }
-                        }
-
-                        if (newPos != center)
-                        {
-                            pixelData[center] = pixelData[newPos];
-                            pixelData[newPos] = currentMaterial;
-                            banned.Add(newPos);
-
-                            isTextureDirty = true;
-                        }
+                        DoWaterGravity(x, y, thisMaterial, thisMass, banned);
                         break;
 
                     case Materials.PhysicsType.PLANT_GRAVITY:
-                        // TODO WT: Like ParticleGravity but only falls if there's no neighbouring materials.
-
                         bool hasSolidNeighbour = false;
-                        //for (int cy = Mathf.Max(0, y - 1); cy < Mathf.Min(canvasSize.y - 1, y + 2); cy++)
-                        //{
-                        //    for (int cx = Mathf.Max(0, x - 1); cx < Mathf.Min(canvasSize.x - 1, x + 2); cx++)
-                        //    {
-                        //        hasSolidNeighbour = hasSolidNeighbour || 
-                        //    }
-                        //}
 
                         LoopNeibouring(new Vector2Int(x - 1, y - 1), new Vector2Int(x + 1, y - 1), (cx, cy) =>
                         {
-                            if (cx == x && cy == y) return;
-                            hasSolidNeighbour = hasSolidNeighbour || pixelData[cy * canvasSize.x + cx] != Materials.AIR;
+                            var index = GetIndex(cx, cy);
+
+                            if ((cx == x && cy == y) || !IsInBounds(cx, cy)) return;
+
+                            var thisPixel = pixelData[index];
+
+                            hasSolidNeighbour = hasSolidNeighbour || (thisPixel != Materials.AIR && thisPixel != Materials.WATER);
                         });
 
                         if (!hasSolidNeighbour)
                         {
-                            DoParticleGravity(banned, bottomLeft, bottom, bottomRight, center, currentMaterial, currentMass);
+                            DoParticleGravity(x, y, thisMaterial, thisMass, banned);
                         }
 
                         break;
@@ -345,7 +259,7 @@ public class PixelSimulationCanvas : MonoBehaviour
                         break;
                 }
 
-                switch (currentMaterial)
+                switch (thisMaterial)
                 {
                     case Materials.LIVE_PLANT:
                         var growChance = 0.01f;
@@ -354,10 +268,14 @@ public class PixelSimulationCanvas : MonoBehaviour
                         var matureChance = growChance;
                         var matureChanceScaler = 2.0f;
 
+                        var top = GetIndex(x, y + 1);
+                        var topLeft = GetIndex(x - 1, y + 1);
+                        var topRight = GetIndex(x + 1, y + 1);
+
                         if (Random.value < growChance)
                         {
                             // Try to grow a shoot upwards
-                            if (pixelData[top] == Materials.AIR)
+                            if (IsInBounds(x, y + 1) && pixelData[top] == Materials.AIR)
                             {
                                 pixelData[top] = Materials.LIVE_PLANT;
                                 isTextureDirty = true;
@@ -370,7 +288,7 @@ public class PixelSimulationCanvas : MonoBehaviour
 
                         if (Random.value < growChance)
                         {
-                            if (pixelData[topLeft] == Materials.AIR)
+                            if (IsInBounds(x - 1, y + 1) && pixelData[topLeft] == Materials.AIR)
                             {
                                 pixelData[topLeft] = Materials.LIVE_PLANT;
                                 isTextureDirty = true;
@@ -383,7 +301,7 @@ public class PixelSimulationCanvas : MonoBehaviour
 
                         if (Random.value < growChance)
                         {
-                            if (pixelData[topRight] == Materials.AIR)
+                            if (IsInBounds(x + 1, y + 1) && pixelData[topRight] == Materials.AIR)
                             {
                                 pixelData[topRight] = Materials.LIVE_PLANT;
                                 isTextureDirty = true;
@@ -396,7 +314,7 @@ public class PixelSimulationCanvas : MonoBehaviour
 
                         if (Random.value < matureChance)
                         {
-                            pixelData[center] = Materials.MATURE_PLANT;
+                            pixelData[thisIndex] = Materials.MATURE_PLANT;
                             isTextureDirty = true;
                         }
 
@@ -423,45 +341,118 @@ public class PixelSimulationCanvas : MonoBehaviour
         }
     }
 
-    private void DoParticleGravity(List<int> banned, int bottomLeft, int bottom, int bottomRight, int center, uint currentMaterial, int currentMass)
+    private void DoParticleGravity(int x, int y, uint material, int mass, List<int> banned)
     {
-        var newPos = center;
+        var thisIndex = GetIndex(x, y);
+        var swapIndex = thisIndex;
 
-        if (currentMass > Materials.GetMass(pixelData[bottom]))
+        var bottom = GetIndex(x, y - 1);
+        var bottomLeft = GetIndex(x - 1, y - 1);
+        var bottomRight = GetIndex(x + 1, y - 1);
+
+        if (IsInBounds(x, y - 1) && mass > Materials.GetMass(pixelData[bottom]))
         {
-            newPos = bottom;
+            swapIndex = bottom;
         }
         else
         {
             if (Random.value > 0.5)
             {
-                if (currentMass > Materials.GetMass(pixelData[bottomLeft]))
+                if (IsInBounds(x - 1, y - 1) && mass > Materials.GetMass(pixelData[bottomLeft]))
                 {
-                    newPos = bottomLeft;
+                    swapIndex = bottomLeft;
                 }
-                else if (currentMass > Materials.GetMass(pixelData[bottomRight]))
+                else if (IsInBounds(x + 1, y - 1) && mass > Materials.GetMass(pixelData[bottomRight]))
                 {
-                    newPos = bottomRight;
+                    swapIndex = bottomRight;
                 }
             }
             else
             {
-                if (currentMass > Materials.GetMass(pixelData[bottomRight]))
+                if (IsInBounds(x + 1, y - 1) && mass > Materials.GetMass(pixelData[bottomRight]))
                 {
-                    newPos = bottomRight;
+                    swapIndex = bottomRight;
                 }
-                else if (currentMass > Materials.GetMass(pixelData[bottomLeft]))
+                else if (IsInBounds(x - 1, y - 1) && mass > Materials.GetMass(pixelData[bottomLeft]))
                 {
-                    newPos = bottomLeft;
+                    swapIndex = bottomLeft;
                 }
             }
         }
 
-        if (newPos != center)
+        if (swapIndex != thisIndex)
         {
-            pixelData[center] = pixelData[newPos];
-            pixelData[newPos] = currentMaterial;
-            banned.Add(newPos);
+            pixelData[thisIndex] = pixelData[swapIndex];
+            pixelData[swapIndex] = material;
+            banned.Add(swapIndex);
+
+            isTextureDirty = true;
+        }
+    }
+
+
+    private void DoWaterGravity(int x, int y, uint material, int mass, List<int> banned)
+    {
+        var thisIndex = GetIndex(x, y);
+        var swapIndex = thisIndex;
+
+        var bottom = GetIndex(x, y - 1);
+        var bottomLeft = GetIndex(x - 1, y - 1);
+        var bottomRight = GetIndex(x + 1, y - 1);
+        var left = GetIndex(x - 1, y);
+        var right = GetIndex(x + 1, y);
+
+        if (IsInBounds(x, y - 1) && mass > Materials.GetMass(pixelData[bottom]))
+        {
+            swapIndex = bottom;
+        }
+        else
+        {
+            if (Random.value > 0.5)
+            {
+                if (IsInBounds(x - 1, y - 1) && mass > Materials.GetMass(pixelData[bottomLeft]))
+                {
+                    swapIndex = bottomLeft;
+                }
+                else if (IsInBounds(x + 1, y - 1) && mass > Materials.GetMass(pixelData[bottomRight]))
+                {
+                    swapIndex = bottomRight;
+                }
+                else if (IsInBounds(x - 1, y) && mass > Materials.GetMass(pixelData[left]))
+                {
+                    swapIndex = left;
+                }
+                else if (IsInBounds(x + 1, y) && mass > Materials.GetMass(pixelData[right]))
+                {
+                    swapIndex = right;
+                }
+            }
+            else
+            {
+                if (IsInBounds(x + 1, y - 1) && mass > Materials.GetMass(pixelData[bottomRight]))
+                {
+                    swapIndex = bottomRight;
+                }
+                else if (IsInBounds(x - 1, y - 1) && mass > Materials.GetMass(pixelData[bottomLeft]))
+                {
+                    swapIndex = bottomLeft;
+                }
+                else if (IsInBounds(x + 1, y) && mass > Materials.GetMass(pixelData[right]))
+                {
+                    swapIndex = right;
+                }
+                else if (IsInBounds(x - 1, y) && mass > Materials.GetMass(pixelData[left]))
+                {
+                    swapIndex = left;
+                }
+            }
+        }
+
+        if (swapIndex != thisIndex)
+        {
+            pixelData[thisIndex] = pixelData[swapIndex];
+            pixelData[swapIndex] = material;
+            banned.Add(swapIndex);
 
             isTextureDirty = true;
         }
@@ -472,16 +463,16 @@ public class PixelSimulationCanvas : MonoBehaviour
         var neighbourCount = 0;
         LoopNeibouring(new Vector2Int(x - 1, y - 1), new Vector2Int(x + 1, y + 1), (cx, cy) =>
         {
-            if (cx != x && cy != y) return;
-            
-            if (pixelData[cy * canvasSize.x + cx] != Materials.AIR) neighbourCount++;
-        });
+            var index = GetIndex(cx, cy);
 
-        Debug.Log(neighbourCount);
+            if ((cx == x && cy == y) || !IsInBounds(cx, cy)) return;
+
+            if (pixelData[index] != Materials.AIR) neighbourCount++;
+        });
 
         if (neighbourCount > 4)
         {
-            pixelData[y * canvasSize.x + x] = Materials.DEAD_PLANT;
+            pixelData[y * canvasSize.x + x] = Materials.SOIL;
             isTextureDirty = true;
         }
     }
@@ -514,6 +505,16 @@ public class PixelSimulationCanvas : MonoBehaviour
     private void SendTickEvent(long frame)
     {
         ReceiveTickEvent(this.frame);
+    }
+
+    private int GetIndex(int x, int y)
+    {
+        return y * canvasSize.x + x;
+    }
+
+    private bool IsInBounds(int x, int y)
+    {
+        return (x >= 0 && x < canvasSize.x && y >= 0 && y < canvasSize.y);
     }
 
     private void ReceiveClickEvent(Vector2Int position, uint material)
