@@ -1,0 +1,249 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel Update
+#pragma kernel Draw
+#pragma kernel WriteCell
+
+#define PHYSICS_NONE 0
+#define PHYSICS_PARTICLE 1
+#define PHYSICS_LIQUID 2
+#define PHYSICS_PLANT 3
+
+struct PixelDrawEvent {
+    int x;
+    int y;
+    int color;
+};
+//
+struct Material {
+    int mass;
+    int physics;
+    float4 color;
+};
+//
+//#define CREATE_MATERIAL(id, name, mass, physics, color) \
+//    const int MATERIAL_TYPE_##name = id;\
+//    const Material MATERIAL_##name = {id, mass, physics, color}
+//
+////#define MATERIAL_DEAD_PLANT 6
+//
+//CREATE_MATERIAL(0, AIR, 0, PHYSICS_NONE, float4(0, 0, 0, 0));
+//CREATE_MATERIAL(1, SAND, 50, PHYSICS_PARTICLE, float4(0.870, 0.788, 0.549, 1.0));
+//CREATE_MATERIAL(2, WATER, 25, PHYSICS_LIQUID, float4(0.549, 0.725, 0.870, 0.5));
+//
+//Material MaterialLookup[] = {
+//    MATERIAL_AIR,
+//    MATERIAL_SAND,
+//    MATERIAL_WATER,
+//};
+
+//Material air = {
+//    MATERIAL_AIR,
+//    0,
+//    float4(0, 0, 0, 0),
+//    PHYSICS_NONE,
+//};
+// 
+
+#define MATERIAL_AIR 0
+#define MATERIAL_SOLID 1
+#define MATERIAL_SAND 2
+#define MATERIAL_WATER 3
+#define MATERIAL_LIVE_PLANT 4
+#define MATERIAL_MATURE_PLANT 5
+
+Material getMaterial(uint material)
+{
+    switch (material) {
+        case MATERIAL_SOLID:
+        {
+            Material result = { 50, PHYSICS_NONE, float4(1, 0, 0, 1) };
+            return result;
+        }
+        case MATERIAL_SAND:
+        {
+            Material result = { 50, PHYSICS_PARTICLE, float4(0.870, 0.788, 0.549, 1.0) };
+            return result;
+        }
+        ////case SOIL:
+        ////    return 50;
+        case MATERIAL_WATER:
+        {
+            Material result = { 30, PHYSICS_LIQUID, float4(0.549, 0.725, 0.870, 0.8) };
+            return result;
+        }
+        case MATERIAL_LIVE_PLANT:
+        {
+            Material result = { 40, PHYSICS_PLANT, float4(0.454, 0.905, 0.454, 1.0) };
+            return result;
+        }
+        case MATERIAL_MATURE_PLANT:
+        {
+            Material result = { 40, PHYSICS_PLANT, float4(0.513, 0.701, 0.435, 1.0) };
+            return result;
+        }
+        ////case MATERIAL_DEAD_PLANT:
+        ////    return 40;
+        case MATERIAL_AIR:
+        default:
+        {
+            Material result = { 0, PHYSICS_NONE, float4(0, 0, 0, 0) };
+            return result;
+        }
+    }
+};
+
+
+int getPhysicsType(uint material)
+{
+    switch (material)
+    {
+    case MATERIAL_SAND:
+    //case MATERIAL_SOIL:
+    //case MATERIAL_DEAD_PLANT:
+        return PHYSICS_PARTICLE;
+
+    case MATERIAL_WATER:
+        return PHYSICS_LIQUID;
+
+    case MATERIAL_LIVE_PLANT:
+    case MATERIAL_MATURE_PLANT:
+        return PHYSICS_PLANT;
+
+    case MATERIAL_AIR:
+    case MATERIAL_SOLID:
+    default:
+        return PHYSICS_NONE;
+    }
+}
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture2D<int> State;
+RWTexture2D<float4> Result;
+
+bool isInBounds(uint2 position)
+{
+    uint width;
+    uint height;
+    State.GetDimensions(width, height);
+    return (position.x >= 0 && position.y >= 0 && position.x < width && position.y < height);
+}
+
+uint2 getParticleSwappedPosition(uint2 id) {
+    Material material = getMaterial(State[id]);
+
+    uint2 swapPosition = id.xy;
+
+    uint2 bottom = id.xy + uint2(0, -1);
+    uint2 bottomLeft = id.xy + uint2(-1, -1);
+    uint2 bottomRight = id.xy + uint2(+1, -1);
+    if (isInBounds(bottom) && material.mass > getMaterial(State[bottom]).mass) {
+        swapPosition = bottom;
+    }
+    else if (isInBounds(bottomLeft) && material.mass > getMaterial(State[bottomLeft]).mass) {
+        swapPosition = bottomLeft;
+    }
+    else if (isInBounds(bottomRight) && material.mass > getMaterial(State[bottomRight]).mass) {
+        swapPosition = bottomRight;
+    }
+
+    return swapPosition;
+}
+
+void doPhysicsParticle(uint2 id) {
+    Material material = getMaterial(State[id]);
+
+    uint2 swapPosition = id.xy;
+
+    uint2 bottom = id.xy + uint2(0, -1);
+    uint2 bottomLeft = id.xy + uint2(-1, -1);
+    uint2 bottomRight = id.xy + uint2(+1, -1);
+    if (isInBounds(bottom) && material.mass > getMaterial(State[bottom]).mass) {
+        swapPosition = bottom;
+    }
+    else if (isInBounds(bottomLeft) && material.mass > getMaterial(State[bottomLeft]).mass) {
+        swapPosition = bottomLeft;
+    }
+    else if (isInBounds(bottomRight) && material.mass > getMaterial(State[bottomRight]).mass) {
+        swapPosition = bottomRight;
+    }
+
+    if (swapPosition.x != id.x && swapPosition.y != id.y) {
+        uint swap = State[swapPosition];
+        State[swapPosition] = State[id.xy];
+        State[id.xy] = swap;
+    }
+}
+
+void doPhysicsLiquid(uint2 id) {
+    Material material = getMaterial(State[id]);
+
+    uint2 swapPosition = id.xy;
+
+    uint2 bottom = id.xy + uint2(0, -1);
+    uint2 bottomLeft = id.xy + uint2(-1, -1);
+    uint2 bottomRight = id.xy + uint2(+1, -1);
+    uint2 left = id.xy + uint2(-1, 0);
+    uint2 right = id.xy + uint2(+1, 0);
+
+    if (isInBounds(bottom) && material.mass > getMaterial(State[bottom]).mass) {
+        swapPosition = bottom;
+    }
+    else if (isInBounds(bottomLeft) && material.mass > getMaterial(State[bottomLeft]).mass) {
+        swapPosition = bottomLeft;
+    }
+    else if (isInBounds(bottomRight) && material.mass > getMaterial(State[bottomRight]).mass) {
+        swapPosition = bottomRight;
+    } 
+    else if (isInBounds(left) && material.mass > getMaterial(State[left]).mass) {
+        swapPosition = left;
+    }
+    else if (isInBounds(right) && material.mass > getMaterial(State[right]).mass) {
+        swapPosition = right;
+    }
+
+    if (swapPosition.x != id.x && swapPosition.y != id.y) {
+        uint swap = State[swapPosition];
+        State[swapPosition] = State[id.xy];
+        State[id.xy] = swap;
+    }
+}
+
+[numthreads(8, 8, 1)]
+void Update(uint3 id : SV_DispatchThreadID)
+{
+    // TODO: insert actual code here!
+    Material material = getMaterial(State[id.xy]);
+
+    // Apply physics.
+    switch (material.physics) {
+    case PHYSICS_PARTICLE:
+        doPhysicsParticle(id.xy);
+
+        break;
+    case PHYSICS_LIQUID:
+        doPhysicsLiquid(id.xy);
+
+        break;
+    default:
+        //State[id.xy] = 0;
+        break;
+    }
+}
+
+[numthreads(8, 8, 1)]
+void Draw(uint3 id : SV_DispatchThreadID)
+{
+    Material material = getMaterial(State[id.xy]);
+    Result[id.xy] = material.color;
+}
+
+
+uint3 writeCellOffset;
+uint writeCellMaterial;
+
+[numthreads(1, 1, 1)]
+void WriteCell(uint3 id : SV_DispatchThreadID)
+{
+    State[id.xy + writeCellOffset.xy] = writeCellMaterial;
+}

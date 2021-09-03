@@ -1140,10 +1140,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   canvasMaterial: {fileID: 2100000, guid: fee3b31c5cdb07f4e9fec8086ce93671, type: 2}
-  canvasSize: {x: 84, y: 48}
+  canvasSize: {x: 128, y: 72}
+  cs: {fileID: 7200000, guid: 9de9e639b8be37a488995712c06bdcae, type: 3}
   isServer: 1
-  seedMode: 0
-  currentMaterial: 4278255615
+  currentMaterial: 3
+  canvasTickRate: 15
 --- !u!4 &1065085011
 Transform:
   m_ObjectHideFlags: 0
